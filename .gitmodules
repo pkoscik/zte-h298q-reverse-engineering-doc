@@ -1,0 +1,3 @@
+[submodule "playground/doom/doom-ascii"]
+	path = playground/doom/doom-ascii
+	url = https://github.com/pkoscik/doom-ascii.git
