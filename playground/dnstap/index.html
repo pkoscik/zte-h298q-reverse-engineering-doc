@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>gateway</title>
+    <style>
+      :root {
+        --bg: #fff;
+        --fg: #1f2328;
+        --dim: #656d76;
+        --line: #d1d9e0;
+        --blue: #0969da;
+        --purple: #8250df;
+        --accent: #f6f8fa;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        background: var(--bg);
+        color: var(--fg);
+        margin: 0;
+        padding: 20px;
+        font:
+          13px/1.5 ui-monospace,
+          "SF Mono",
+          "JetBrains Mono",
+          "DejaVu Sans Mono",
+          monospace;
+      }
+      h2 {
+        font-size: 12px;
+        margin: 24px 0 8px;
+        color: var(--dim);
+        font-weight: 600;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+      }
+      th,
+      td {
+        padding: 4px 16px 4px 0;
+        text-align: left;
+        vertical-align: top;
+        white-space: nowrap;
+      }
+      th {
+        color: var(--dim);
+        font-weight: 600;
+        border-bottom: 1px solid var(--line);
+        padding-bottom: 6px;
+      }
+      tbody tr:hover td {
+        background: var(--accent);
+      }
+      td.dom {
+        white-space: normal;
+        word-break: break-all;
+        color: var(--blue);
+      }
+      tr.sni td.dom {
+        color: var(--purple);
+      }
+      .dim {
+        color: var(--dim);
+      }
+      .hot {
+        font-weight: 600;
+      }
+      .dns {
+        color: var(--blue);
+      }
+      .sni {
+        color: var(--purple);
+      }
+      .ctrl {
+        display: flex;
+        gap: 16px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .ctrl input[type="text"] {
+        background: var(--bg);
+        color: var(--fg);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 5px 10px;
+        font: inherit;
+        width: 280px;
+        max-width: 60vw;
+      }
+      .ctrl input[type="text"]:focus {
+        outline: 0;
+        border-color: var(--blue);
+        box-shadow: 0 0 0 2px #0969da33;
+      }
+      .ctrl label {
+        color: var(--dim);
+        cursor: pointer;
+        user-select: none;
+      }
+      .ctrl label input {
+        vertical-align: middle;
+        margin-right: 5px;
+        accent-color: var(--blue);
+      }
+      .pill {
+        display: inline-block;
+        padding: 1px 8px;
+        margin: 2px 5px 2px 0;
+        background: var(--accent);
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        font-size: 11px;
+      }
+      .pill .hot {
+        color: var(--blue);
+        margin-left: 3px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="ctrl">
+      <input
+        id="q"
+        type="text"
+        placeholder="filter by device, domain or ip&hellip;"
+        autofocus
+      />
+      <label><input id="mdns" type="checkbox" /> show mDNS chatter</label>
+      <span id="stat" class="dim"></span>
+    </div>
+    <h2>devices</h2>
+    <table id="dev"></table>
+    <h2>live feed</h2>
+    <table id="feed"></table>
+    <script>
+      const now = () => Date.now() / 1000;
+      const ago = (s) => {
+        s = Math.max(0, now() - s);
+        return s < 60
+          ? Math.floor(s) + "s"
+          : s < 3600
+            ? Math.floor(s / 60) + "m"
+            : Math.floor(s / 3600) + "h";
+      };
+      const clock = (s) => new Date(s * 1000).toLocaleTimeString();
+      function esc(s) {
+        const e = document.createElement("div");
+        e.textContent = s == null ? "" : s;
+        return e.innerHTML;
+      }
+      const proto = (e) =>
+        e.kind == "sni" ? "TLS" : e.port == "5353" ? "mDNS" : "DNS";
+      function topDomains(events, n) {
+        const c = {};
+        for (const e of events) {
+          c[e.domain] = (c[e.domain] || 0) + 1;
+        }
+        return Object.entries(c)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, n);
+      }
+      async function tick() {
+        let r;
+        try {
+          r = await (await fetch("/data")).json();
+        } catch (e) {
+          return;
+        }
+        const q = document.getElementById("q").value.trim().toLowerCase();
+        const showMdns = document.getElementById("mdns").checked;
+        const match = (s) => !q || (s || "").toLowerCase().includes(q);
+        let all = [],
+          total = 0;
+        for (const d of r)
+          for (const e of d.events) {
+            total++;
+            if (!showMdns && e.port == "5353") continue;
+            if (q && !(match(d.name) || match(e.domain) || match(e.dst)))
+              continue;
+            all.push({ ...e, dev: d.name });
+          }
+        document.getElementById("stat").textContent =
+          r.length +
+          " devices · " +
+          total +
+          " events" +
+          (q || !showMdns ? " · " + all.length + " shown" : "");
+        document.getElementById("dev").innerHTML =
+          "<tr><th>device<th>vendor<th>ip<th>mac<th>#<th>last<th>top domains</tr>" +
+          r
+            .map((d) => {
+              const ev = d.events.filter((e) => showMdns || e.port != "5353");
+              const tops = topDomains(ev, 5)
+                .map(
+                  ([n, c]) =>
+                    `<span class=pill>${esc(n)} <span class=hot>${c}</span></span>`,
+                )
+                .join("");
+              return (
+                `<tr><td class=hot>${esc(d.name)}<td class=dim>${esc(d.vendor)}<td>${esc(d.ip)}` +
+                `<td class=dim>${esc(d.mac)}<td>${ev.length}` +
+                `<td class=dim>${clock(d.last)} (${ago(d.last)})<td>${tops || "<span class=dim>—</span>"}</tr>`
+              );
+            })
+            .join("");
+        all.sort((a, b) => b.t - a.t);
+        document.getElementById("feed").innerHTML =
+          "<tr><th>time<th>device<th>proto<th>dst<th>domain</tr>" +
+          all
+            .slice(0, 500)
+            .map((e) => {
+              const dst = [e.dst, e.port].filter(Boolean).join(":");
+              return (
+                `<tr class=${e.kind}><td class=dim>${clock(e.t)}<td>${esc(e.dev)}` +
+                `<td class=${e.kind}>${proto(e)}<td class=dim>${esc(dst)}<td class=dom>${esc(e.domain)}</tr>`
+              );
+            })
+            .join("");
+      }
+      document.getElementById("q").addEventListener("input", tick);
+      document.getElementById("mdns").addEventListener("change", tick);
+      tick();
+      setInterval(tick, 1000);
+    </script>
+  </body>
+</html>
